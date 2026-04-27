@@ -1,0 +1,282 @@
+---
+title: "Bank On Indicators"
+output: html_document
+date: "2026-04-27"
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(janitor)
+library(haven)
+library(tidyverse)
+options(scipen = 999)
+library(sf)
+library(mapview)
+library(sasr)
+library(readxl)
+
+mort <- read_xlsx("D:/Dropbox/cclrc_it/scraper/foreclosure_filings1.xlsx", sheet = "mort") %>% clean_names() %>% mutate(fore_type = "mort")
+bor <- read_xlsx("D:/Dropbox/cclrc_it/scraper/foreclosure_filings1.xlsx", sheet = "bor") %>% clean_names() %>% mutate(fore_type = "bor")
+tax <- read_xlsx("D:/Dropbox/cclrc_it/scraper/foreclosure_filings1.xlsx", sheet = "tax") %>% clean_names() %>% mutate(fore_type = "tax")
+tax_lien <- read_xlsx("D:/Dropbox/cclrc_it/scraper/foreclosure_filings1.xlsx", sheet = "tax_lien") %>% clean_names() %>% mutate(fore_type = "tax_lien")
+quiet_title <- read_xlsx("D:/Dropbox/cclrc_it/scraper/foreclosure_filings1.xlsx", sheet = "quiet title") %>% clean_names() %>% mutate(fore_type = "quiet_title")
+partition <- read_xlsx("D:/Dropbox/cclrc_it/scraper/foreclosure_filings1.xlsx", sheet = "partition") %>% clean_names() %>% mutate(fore_type = "partition")
+names(bor) <- c("defendant", "address", "city", "zip", "case_no", "parcel", "x", "filedate", "fore_type")
+names(mort) <- c("defendant", "address", "city", "zip", "case_no", "parcel", "x", "filedate", "fore_type")
+names(tax) <- c("defendant", "address", "city", "zip", "case_no", "parcel", "x", "filedate", "fore_type")
+names(tax_lien) <- c("defendant", "address", "city", "zip", "case_no", "parcel", "x", "filedate", "fore_type")
+names(quiet_title) <- c("defendant", "address", "city", "zip", "case_no", "parcel", "x", "filedate", "fore_type")
+names(partition) <- c("defendant", "address", "city", "zip", "case_no", "parcel", "x", "filedate", "fore_type")
+
+ptg <- read_sas("P:/Poverty Center (POV)/COPO-69/POV_DATA/Secure-e/Core Data Sets Non-Confidential/Poverty Center Data Warehouse/Lookup Tables/parcel_to_geo_lookup_w_latlon.sas7bdat") %>% 
+  clean_names()
+
+
+tr20 <- st_read("P:/Poverty Center (POV)/COPO-69/POV_DATA/Secure-e/Core Data Sets Non-Confidential/Poverty Center Data Warehouse/Maps/Shapefiles/2020 Census Boundary/tract2020/tl_2020_39035_tract20.shp") %>% 
+  clean_names()
+
+
+ev_filings <- read_sas("P:/Poverty Center (POV)/Hemi-Cuda/publix2/Publix-d/Projects/Eviction data/sasdata/LSC/lsc_eviction_fillings.sas7bdat") %>% clean_names()
+ev_parties <- read_sas("P:/Poverty Center (POV)/Hemi-Cuda/publix2/Publix-d/Projects/Eviction data/sasdata/LSC/lsc_eviction_parties.sas7bdat") %>% clean_names()
+ev_properties <- read_sas("P:/Poverty Center (POV)/Hemi-Cuda/publix2/Publix-d/Projects/Eviction data/sasdata/LSC/lsc_eviction_properties.sas7bdat") %>% clean_names()
+
+
+ev_properties <- ev_properties %>% 
+  mutate(
+    statezip = if_else(str_detect(geocoded_property_address, "Ohio, [:digit:]{5}"), 1, 0), 
+    )
+
+# ev_fix <- ev_properties %>% 
+#   filter(statezip == 0) %>% 
+#   filter(property_address != "") %>% 
+#   mutate(property_address = str_squish(str_to_upper(property_address))) %>% 
+#   mutate(property_address = str_squish(str_remove_all(property_address, "AKA EUCLID BEACH MOBILE HOME COMMUNITY| UNIT 2 AKA MARTIN LUTHER KING"))) %>% 
+#   separate(property_address, into = paste0("p", 1:5), sep = ",", remove = FALSE) %>% 
+#   mutate(across(p1:p5, ~str_squish(str_to_upper(.)))) %>% 
+#   mutate(
+#     lw = str_remove_all(word(p1, -1), "[:punct:]"), 
+#     lw2 = str_remove_all(word(p1, -2, -2), "[:punct:]"), 
+#          )
+# 
+# rd_types <- c("Avenue",
+# "Ave", 
+# "Boulevard",
+# "Blvd", 
+# "Drive",
+# "Dr", 
+# "Road",
+# "Rd", 
+# "Street",
+# "St", 
+# "Court",
+# "Ct", 
+# "Lane",
+# "Ln")
+# 
+# rd_types <- str_to_upper(rd_types)
+
+# ev_fix <- ev_fix %>% 
+#   mutate(
+#     lw_drop = case_when(
+#       lw %in% rd_types ~ 0, 
+#       str_detect(lw, "STAIRS") ~ 1, 
+#       lw %in% c("UP", "DOWN", "FRONT", "DOWNFRONT", "UNIT", "BEDROOM", "ROOM", "OCCUPIED", "DWN", "APARTMENT", "UNITS", "DWNSTRS") ~ 1, 
+#       !str_detect(lw, "[:alpha:]") ~ 1
+#     ),
+#     lw2_drop = case_when(
+#       lw2 %in% rd_types ~ 0, 
+#       str_detect(lw2, "STAIRS") ~ 1, 
+#       lw2 %in% c("UP", "DOWN", "FRONT", "DOWNFRONT", "UNIT", "BEDROOM", "ROOM", "OCCUPIED", "DWN", "APARTMENT", "UNITS", "DWNSTRS") ~ 1, 
+#       !str_detect(lw2, "[:alpha:]") ~ 1
+#     )
+#   )
+# 
+# ev_fix <- ev_fix %>% 
+#   mutate(
+#     p1_fix = case_when(
+#       lw_drop == 1 & lw2_drop == 1 ~ word(p1, 1, -3), 
+#       lw_drop == 1 & lw2_drop == 0 ~ word(p1, 1, -2), 
+#       lw_drop == 0 ~ p1,
+#       TRUE ~ "xxx"
+#                        )
+#   )
+
+
+e
+
+my_sess <- get_sas_session()
+result <- run_sas(paste("
+  %include 'D:/epilots/buildFormats07.sas';
+  %include 'D:/Reference/Macros/owner_cat.sas';
+  %include 'D:/Reference/Macros/ADDR_CLEAN_SRS.sas';
+  libname candod 'D:/epilots/data';
+  libname lu 'P:/Poverty Center (POV)/COPO-69/POV_DATA/Secure-e/Core Data Sets Non-Confidential/Poverty Center Data Warehouse/Lookup Tables'
+
+  
+"))
+
+df2sd(ev_properties)
+
+result <- run_sas(paste("
+%clean_addr(_df,geocoded_property_address );
+
+  
+"))
+
+ev_clean <- sd2df("_df_clean")
+
+ev_clean <- ev_clean %>% 
+  rename(final_address_nd = geocoded_property_address_nd)
+
+
+ptg <- ptg %>% 
+  # filter(final_address_nd %in% ev_clean$geocoded_property_address_nd) %>% 
+  select(parcel, final_address_nd, zip20, neighbor20, mcdnme20, final_long, final_lat) #%>% 
+  # rename( = final_address_nd)
+
+
+ev_clean2 <- ev_clean %>% 
+  select(geocoded_property_address, final_address_nd, orig_geocoded_property_address, surrogate_key) %>% 
+  mutate(orig_geocoded_property_address = str_squish(str_to_upper(orig_geocoded_property_address))) %>% 
+  mutate(zip20 = word(orig_geocoded_property_address, -1, -1)) %>% 
+  mutate(rn = row_number())
+
+
+
+ptg2 <- ptg %>% 
+  filter(final_address_nd %in% ev_clean2$final_address_nd) 
+
+ev_clean3 <- ev_clean2 %>% 
+  left_join(ptg) %>% 
+  mutate(
+    parcel = if_else(str_detect(final_address_nd, "1347 E 112TH ST, APT 1"), "120-03-303", parcel, parcel), 
+    parcel = if_else(str_detect(final_address_nd, "1347 E 112TH ST, APT 3"), "120-03-304", parcel, parcel), 
+           ) %>% 
+  distinct() %>% 
+  group_by(rn) %>% 
+  arrange(rn, parcel) %>% 
+  slice(1) %>% 
+  ungroup()
+
+
+
+ev_fix <- ev_clean3 %>% 
+  filter(is.na(parcel))
+ev_good <- ev_clean3 %>% 
+  filter(!is.na(parcel))
+
+library(tidygeocoder)
+
+ev_fix <- ev_fix %>% 
+  geocode(orig_geocoded_property_address)
+
+ev_fix2 <- ev_fix %>% 
+  select(-c(final_lat, final_long)) %>% 
+  rename(
+    final_lat = lat, final_long = long
+  )
+
+zip_shp <- st_read("P:/Poverty Center (POV)/COPO-69/POV_DATA/Secure-e/Core Data Sets Non-Confidential/Poverty Center Data Warehouse/Maps/Shapefiles/2020 Census Boundary/NEOCANDO Maps/NEOCANDO_cuyzcta2020_nad83.shp") %>% clean_names() %>% 
+  select(zip20) %>% 
+  rename(zip20_shp = zip20)
+city_shp <- st_read("P:/Poverty Center (POV)/COPO-69/POV_DATA/Secure-e/Core Data Sets Non-Confidential/Poverty Center Data Warehouse/Maps/Shapefiles/2020 Census Boundary/NEOCANDO Maps/NEOCANDO_cuymcds2020_nad83.shp") %>% 
+  clean_names() %>% 
+  select(namelsad20) %>% 
+  rename(mcdnme20 = namelsad20)
+nhood_shp <- st_read("P:/Poverty Center (POV)/COPO-69/POV_DATA/Secure-e/Core Data Sets Non-Confidential/Poverty Center Data Warehouse/Maps/Shapefiles/2020 Census Boundary/NEOCANDO Maps/NEOCANDO_neighbors2020_nad83.shp") %>% clean_names() %>% 
+  select(neighbor20)
+
+
+ev_fix3 <- ev_fix2 %>% 
+  filter(!is.na(final_long)) %>% 
+  select(-c(neighbor20, mcdnme20)) %>% 
+  st_as_sf(coords = c("final_long", "final_lat"), crs = st_crs(city_shp), remove = FALSE) %>% 
+  st_join(zip_shp) %>% 
+  st_join(city_shp) %>% 
+  st_join(nhood_shp) 
+
+ev_fix4 <- ev_fix3 %>% 
+  st_set_geometry(NULL) %>% 
+  select(contains("geocoded"), surrogate_key, contains("zip"), neighbor20, mcdnme20, final_lat, final_long) %>% 
+  distinct() %>% 
+  mutate(zip20_shp = as.character(zip20_shp)) %>% 
+  mutate(
+    zip20_shp = if_else(!is.na(zip20_shp), zip20_shp, zip20, zip20_shp)
+  ) %>% 
+  select(-zip20) %>% 
+  rename(zip20 = zip20_shp) %>% 
+  distinct()
+
+ev_fix5 <- ev_fix %>% 
+  select(-c(zip20, rn, parcel, neighbor20, mcdnme20, ends_with("lat"), ends_with("long"))) %>% 
+  distinct() %>% 
+  inner_join(ev_fix4) %>% 
+  filter()
+
+ev2 <- ev_fix5 %>% 
+  bind_rows(ev_good)
+
+ev3 <- ev2 %>% 
+  left_join(ev_filings)
+
+
+ev3 <- ev3 %>% 
+  mutate(
+    yr_filed = year(date_filed)
+  )
+
+write_rds(ev3, here("data", "evictions_filed_cuy_2023to2026.rds"))
+  
+```
+
+```{r}
+tall <- mort %>%
+  bind_rows(bor) %>%
+  bind_rows(tax) %>%
+  bind_rows(tax_lien) %>%
+  bind_rows(quiet_title) %>%
+  bind_rows(partition) %>% 
+  select(-fore_type) %>% 
+  distinct()
+
+tall2 <- tall %>% 
+  select(-case_no) %>% 
+  distinct() %>% 
+  group_by(defendant, parcel, filedate) %>% 
+  mutate(nx = n(), 
+         idx = cur_group_id()) %>% 
+  ungroup() %>% 
+  group_by(idx) %>% 
+  slice(1) %>% 
+  ungroup()
+
+tall2 <- tall2 %>% 
+  select(parcel, address, city, zip, defendant, filedate) %>% 
+  distinct() %>% 
+  mutate(
+    filedate = as_date(filedate), 
+    file_yr = year(filedate)
+         )
+
+
+ptg2 <- ptg %>% 
+  select(parcel, final_address_nd, zip20, neighbor20, mcdnme20, final_long, final_lat) %>% 
+  distinct()
+
+tall3 <- tall2 %>% 
+  left_join(ptg2)
+
+write_rds(tall3, here("data", "foreclosures.rds"))
+
+
+
+
+
+
+
+
+```
+

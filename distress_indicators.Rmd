@@ -1,0 +1,105 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-04-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(here)
+library(janitor)
+library(haven)
+library(tidyverse)
+options(scipen = 999)
+library(sf)
+library(mapview)
+library(leaflet)
+library(leaflet.extras)
+
+foreclosures <- read_rds(here("data", "foreclosures.rds"))
+deltax <- read_rds(here("data", "deltax.rds"))
+evictions <- read_rds(here("data", "evictions_filed_cuy_2023to2026.rds")) %>% 
+  select(-rn) %>% 
+  distinct()
+
+zip_shp <- st_read("P:/Poverty Center (POV)/COPO-69/POV_DATA/Secure-e/Core Data Sets Non-Confidential/Poverty Center Data Warehouse/Maps/Shapefiles/2020 Census Boundary/NEOCANDO Maps/NEOCANDO_cuyzcta2020_nad83.shp") %>% clean_names() %>% 
+  select(zip20) %>% 
+  rename(zip20_shp = zip20)
+city_shp <- st_read("P:/Poverty Center (POV)/COPO-69/POV_DATA/Secure-e/Core Data Sets Non-Confidential/Poverty Center Data Warehouse/Maps/Shapefiles/2020 Census Boundary/NEOCANDO Maps/NEOCANDO_cuymcds2020_nad83.shp") %>% 
+  clean_names() %>% 
+  select(namelsad20) %>% 
+  rename(mcdnme20 = namelsad20)
+nhood_shp <- st_read("P:/Poverty Center (POV)/COPO-69/POV_DATA/Secure-e/Core Data Sets Non-Confidential/Poverty Center Data Warehouse/Maps/Shapefiles/2020 Census Boundary/NEOCANDO Maps/NEOCANDO_neighbors2020_nad83.shp") %>% clean_names() %>% 
+  select(neighbor20)
+
+
+
+```
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+ev_by_nhood <- evictions %>% 
+  filter(mcdnme20 == "Cleveland city") %>% 
+  group_by(neighbor20) %>% 
+  summarise(n_evict_cases = n()) %>% 
+  ungroup()
+
+foreclosures_by_nhood <- foreclosures %>% 
+  filter(file_yr > 2022) %>% 
+  group_by(neighbor20) %>% 
+  summarise(n_foreclosures = n_distinct(parcel)) %>% 
+  ungroup()
+
+deltax_by_nhood <- deltax %>% 
+  filter(neighbor20 != "") %>% 
+  group_by(neighbor20) %>% 
+  summarise(
+    n_par = n_distinct(parcel), 
+    n_deltax = n_distinct(parcel[total_net_delq_balance > 100])
+  ) %>% 
+  ungroup() %>% 
+  mutate(
+    pct_deltax = round(n_deltax / n_par * 100, 2)
+  )
+
+
+nhood_shp2 <- nhood_shp %>% 
+  left_join(deltax_by_nhood) %>% 
+  left_join(foreclosures_by_nhood) %>% 
+  left_join(ev_by_nhood)
+
+
+
+
+```
+
+
+
+### Indicators by Neighborhood {.tabset}
+
+#### Tax delinquency
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+nhood_shp2 %>% 
+  mapview(zcol = "pct_deltax", layer.name = "Percent\nTax Delinquent")
+```
+
+
+
+#### Foreclosures
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+nhood_shp2 %>% 
+  mapview(zcol = "n_foreclosures", layer.name = "Foreclosures\n(count)")
+```
+
+#### Evictions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+nhood_shp2 %>% 
+  mapview(zcol = "n_evict_cases", layer.name = "Evictions\nFiled\n(count)")
+
+```
